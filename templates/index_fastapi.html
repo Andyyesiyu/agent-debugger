@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>智能Agent调试器</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+        .header {
+            background: #2563eb;
+            color: white;
+            padding: 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .task-input {
+            padding: 20px;
+            border-bottom: 1px solid #e5e7eb;
+        }
+        .input-group {
+            display: flex;
+            gap: 10px;
+            align-items: stretch;
+        }
+        textarea {
+            flex: 1;
+            padding: 12px;
+            border: 1px solid #d1d5db;
+            border-radius: 8px;
+            font-size: 16px;
+            resize: vertical;
+            min-height: 80px;
+        }
+        button {
+            padding: 12px 24px;
+            background: #2563eb;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        button:hover {
+            background: #1d4ed8;
+        }
+        button:disabled {
+            background: #9ca3af;
+            cursor: not-allowed;
+        }
+        .execution-area {
+            display: flex;
+            min-height: 400px;
+        }
+        .workflow {
+            flex: 2;
+            padding: 20px;
+            border-right: 1px solid #e5e7eb;
+        }
+        .logs {
+            flex: 3;
+            padding: 20px;
+            background: #fafafa;
+        }
+        .step-card {
+            background: white;
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 10px;
+            transition: all 0.3s;
+        }
+        .step-card.completed {
+            border-left: 4px solid #10b981;
+        }
+        .step-card.active {
+            border-left: 4px solid #3b82f6;
+            box-shadow: 0 2px 8px rgba(59, 130, 246, 0.15);
+        }
+        .step-card.pending {
+            border-left: 4px solid #9ca3af;
+            opacity: 0.7;
+        }
+        .log-entry {
+            background: #f3f4f6;
+            border-radius: 6px;
+            padding: 10px;
+            margin-bottom: 8px;
+            font-family: monospace;
+            font-size: 14px;
+        }
+        .cost-display {
+            background: #fef3c7;
+            padding: 10px 15px;
+            border-radius: 8px;
+            font-weight: 600;
+            margin-bottom: 15px;
+        }
+        .status-indicator {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+        .status-running { background: #f59e0b; }
+        .status-completed { background: #10b981; }
+        .status-error { background: #ef4444; }
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #2563eb;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .flow-diagram {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 20px;
+        }
+        .flow-step {
+            background: #f9fafb;
+            border: 2px solid #d1d5db;
+            border-radius: 50px;
+            padding: 10px 20px;
+            transition: all 0.3s;
+            min-width: 200px;
+            text-align: center;
+        }
+        .flow-step.active {
+            background: #3b82f6;
+            color: white;
+            border-color: #1d4ed8;
+        }
+        .flow-arrow {
+            color: #6b7280;
+            font-size: 24px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🤖 智能Agent调试器</h1>
+            <div id="statusDisplay">
+                <span id="statusText">准备就绪</span>
+                <span class="status-indicator status-completed"></span>
+            </div>
+        </div>
+        
+        <div class="task-input">
+            <h3>任务输入</h3>
+            <div class="input-group">
+                <textarea id="taskInput" placeholder="请输入您的任务描述，例如：分析2024年AI行业的发展趋势并总结主要特点..."></textarea>
+                <button id="executeBtn" onclick="startTask()">开始执行</button>
+            </div>
+        </div>
+        
+        <div class="cost-display" id="costDisplay" style="display: none;">
+            <div><strong>Token消耗:</strong> <span id="tokenCount">0</span> tokens</div>
+            <div><strong>预估成本:</strong> $<span id="costEstimate">0.00</span></div>
+        </div>
+        
+        <div class="execution-area">
+            <div class="workflow">
+                <h3>执行流程</h3>
+                <div id="workflowSteps" class="flow-diagram">
+                    <div class="loading" id="loadingSpinner" style="display: none;"></div>
+                </div>
+            </div>
+            <div class="logs">
+                <h3>执行日志</h3>
+                <div id="executionLogs">
+                    <div class="log-entry">系统已启动，等待任务...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let websocket = null;
+        let currentTaskId = null;
+        let totalTokens = 0;
+        let totalCost = 0;
+
+        function addLog(message, type = 'info') {
+            const logsDiv = document.getElementById('executionLogs');
+            const logEntry = document.createElement('div');
+            logEntry.className = 'log-entry';
+            const timestamp = new Date().toLocaleTimeString();
+            logEntry.innerHTML = `[${timestamp}] ${message}`;
+            logsDiv.appendChild(logEntry);
+            logsDiv.scrollTop = logsDiv.scrollHeight;
+        }
+
+        function updateStatus(text, type = 'completed') {
+            const statusText = document.getElementById('statusText');
+            const statusIndicator = document.querySelector('.status-indicator');
+            
+            statusText.textContent = text;
+            statusIndicator.className = `status-indicator status-${type}`;
+        }
+
+        async function startTask() {
+            const taskDescription = document.getElementById('taskInput').value.trim();
+            if (!taskDescription) {
+                alert('请输入任务描述');
+                return;
+            }
+
+            // 清空UI准备新任务
+            document.getElementById('workflowSteps').innerHTML = '';
+            document.getElementById('executionLogs').innerHTML = '';
+            document.getElementById('costDisplay').style.display = 'none';
+            totalTokens = 0;
+            totalCost = 0;
+            
+            addLog('创建新任务...');
+            document.getElementById('executeBtn').disabled = true;
+            
+            try {
+                // 创建任务
+                const response = await fetch('/api/tasks', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ description: taskDescription })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    currentTaskId = data.data.id;
+                    addLog(`任务创建成功，ID: ${currentTaskId}`);
+                    
+                    // 显示执行计划
+                    displayWorkflowSteps(data.data.steps);
+                    
+                    // 连接WebSocket并开始执行
+                    connectWebSocket();
+                } else {
+                    addLog(`创建任务失败: ${data.message}`, 'error');
+                    document.getElementById('executeBtn').disabled = false;
+                }
+            } catch (error) {
+                addLog(`错误: ${error}`, 'error');
+                document.getElementById('executeBtn').disabled = false;
+            }
+        }
+
+        function displayWorkflowSteps(steps) {
+            const stepsDiv = document.getElementById('workflowSteps');
+            stepsDiv.innerHTML = '';
+            
+            steps.forEach((step, index) => {
+                stepsDiv.innerHTML += `
+                    <div class="flow-step pending" id="step-${index + 1}">
+                        步骤 ${index + 1}: ${step.description}
+                    </div>
+                    ${index < steps.length - 1 ? '<div class="flow-arrow">↓</div>' : ''}
+                `;
+            });
+        }
+
+        function connectWebSocket() {
+            if (websocket) {
+                websocket.close();
+            }
+            
+            const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${wsProtocol}//${window.location.hostname}:${window.location.port}/ws/${currentTaskId}`;
+            
+            websocket = new WebSocket(wsUrl);
+            
+            websocket.onopen = () => {
+                addLog('WebSocket连接成功');
+                updateStatus('准备执行', 'running');
+                
+                // 发送开始执行命令
+                websocket.send(JSON.stringify({
+                    type: 'start_execution'
+                }));
+            };
+            
+            websocket.onmessage = (event) => {
+                const message = JSON.parse(event.data);
+                
+                switch (message.type) {
+                    case 'task_status':
+                        addLog('接收到任务状态更新');
+                        break;
+                        
+                    case 'task_started':
+                        updateStatus('任务开始执行', 'running');
+                        addLog('任务已开始执行');
+                        break;
+                        
+                    case 'step_started':
+                        const stepData = message.data;
+                        document.getElementById(`step-${stepData.step}`).className = 'flow-step active';
+                        addLog(`开始步骤 ${stepData.step}: ${stepData.tool} - ${stepData.description}`);
+                        break;
+                        
+                    case 'step_completed':
+                        const completionData = message.data;
+                        document.getElementById(`step-${completionData.step}`).className = 'flow-step completed';
+                        
+                        totalTokens += completionData.total_tokens;
+                        totalCost += completionData.cost;
+                        
+                        addLog(`步骤 ${completionData.step} 完成 - 使用${completionData.total_tokens}个tokens，成本$${completionData.cost.toFixed(6)}`);
+                        
+                        // 更新成本显示
+                        document.getElementById('costDisplay').style.display = 'block';
+                        document.getElementById('tokenCount').textContent = totalTokens;
+                        document.getElementById('costEstimate').textContent = totalCost.toFixed(6);
+                        break;
+                        
+                    case 'task_completed':
+                        updateStatus('任务完成', 'completed');
+                        addLog(`任务执行完成！总token消耗: ${message.data.total_tokens}, 总成本: $${message.data.total_cost.toFixed(6)}`);
+                        document.getElementById('executeBtn').disabled = false;
+                        websocket.close();
+                        break;
+                        
+                    case 'error':
+                        addLog(`执行错误: ${message.data.message}`, 'error');
+                        updateStatus('执行失败', 'error');
+                        document.getElementById('executeBtn').disabled = false;
+                        break;
+                }
+            };
+            
+            websocket.onerror = (error) => {
+                addLog('WebSocket连接错误', 'error');
+                updateStatus('连接失败', 'error');
+                document.getElementById('executeBtn').disabled = false;
+            };
+            
+            websocket.onclose = () => {
+                addLog('WebSocket连接已关闭');
+            };
+        }
+    </script>
+</body>
+</html>

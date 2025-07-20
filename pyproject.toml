@@ -1,0 +1,18 @@
+[project]
+name = "agent-debugger"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.116.1",
+    "flask>=3.1.1",
+    "flask-cors>=6.0.1",
+    "flask-socketio>=5.5.1",
+    "openai>=1.95.1",
+    "pydantic>=2.11.7",
+    "python-multipart>=0.0.20",
+    "requests>=2.32.4",
+    "rich>=14.0.0",
+    "uvicorn>=0.35.0",
+]
