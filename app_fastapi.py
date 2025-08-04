@@ -1,13 +1,20 @@
 import asyncio
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
-from pydantic import BaseModel
 
 from agent_engine.core import AgentDecisionEngine
+from agent_engine.executor import execute_agent_task_async
+from models.schemas import (
+    ApiResponse,
+    ExecutionRequest,
+    TaskRequest,
+    TaskResponse,
+    TaskStep,
+)
 from tools.manager import tool_manager
 
 app = FastAPI(title="Agent Debugger API", version="1.0.0")
@@ -26,47 +33,6 @@ agent_engine = AgentDecisionEngine()
 agent_engine.set_tool_manager(tool_manager)  # 设置工具管理器
 sessions: Dict[str, Dict[str, Any]] = {}
 websocket_connections: Dict[str, List[WebSocket]] = {}
-
-
-# == Pydantic 数据模型 ==
-class TaskRequest(BaseModel):
-    description: str
-    strategy: str = "balanced"
-    execution_mode: str = "static"  # "static" or "llm_driven"
-
-
-class ExecutionRequest(BaseModel):
-    execution_mode: str = "static"  # "static" or "llm_driven"
-
-
-class TaskStep(BaseModel):
-    step_id: str
-    tool: str
-    description: str
-    status: str = "pending"
-
-
-class TaskResponse(BaseModel):
-    id: str
-    description: str
-    strategy: str
-    status: str
-    steps: List[TaskStep]
-    total_tokens: int = 0
-    total_cost: float = 0.0
-    created_at: datetime
-
-
-class CostEstimate(BaseModel):
-    total_tokens: int
-    total_cost: float
-    steps: int
-
-
-class ApiResponse(BaseModel):
-    success: bool
-    message: str
-    data: Optional[Dict[str, Any]] = None
 
 
 # == API 路由 ==
@@ -154,7 +120,18 @@ async def execute_task(task_id: str, request: ExecutionRequest) -> ApiResponse:
             raise HTTPException(status_code=400, detail="LLM执行引擎未配置")
         asyncio.create_task(execute_agent_task_with_llm(task_id))
     else:
-        asyncio.create_task(execute_agent_task(task_id))
+        session = sessions[task_id]
+        asyncio.create_task(
+            execute_agent_task_async(
+                agent_engine,
+                tool_manager,
+                task_id,
+                session,
+                lambda event, data: broadcast_to_task(
+                    task_id, {"type": event, "data": data}
+                ),
+            )
+        )
 
     return ApiResponse(success=True, message=f"任务执行已启动 ({execution_mode} 模式)")
 
@@ -200,8 +177,18 @@ async def websocket_endpoint(websocket: WebSocket, task_id: str):
                     # 使用LLM驱动的执行
                     asyncio.create_task(execute_agent_task_with_llm(task_id))
                 else:
-                    # 使用传统的静态执行
-                    asyncio.create_task(execute_agent_task(task_id))
+                    session = sessions[task_id]
+                    asyncio.create_task(
+                        execute_agent_task_async(
+                            agent_engine,
+                            tool_manager,
+                            task_id,
+                            session,
+                            lambda event, data: broadcast_to_task(
+                                task_id, {"type": event, "data": data}
+                            ),
+                        )
+                    )
 
     except WebSocketDisconnect:
         # 从连接池移除
@@ -224,76 +211,6 @@ async def broadcast_to_task(task_id: str, message: Dict[str, Any]):
         # 清理断开的连接
         for ws in disconnected:
             websocket_connections[task_id].remove(ws)
-
-
-async def execute_agent_task(task_id: str):
-    """执行Agent任务"""
-    if task_id not in sessions:
-        await broadcast_to_task(
-            task_id, {"type": "error", "data": {"message": "任务不存在"}}
-        )
-        return
-
-    session = sessions[task_id]
-    task = agent_engine.get_task(task_id)
-
-    if not task:
-        await broadcast_to_task(
-            task_id, {"type": "error", "data": {"message": "任务不存在"}}
-        )
-        return
-
-    # 更新状态为运行中
-    session["status"] = "running"
-    await broadcast_to_task(task_id, {"type": "task_started", "data": session})
-
-    task_plan = task.steps
-
-    for i, step in enumerate(task_plan):
-        # 发送步骤开始事件
-        step_data = {
-            "step": i + 1,
-            "total_steps": len(task_plan),
-            "tool": step.tool,
-            "description": step.description,
-        }
-        await broadcast_to_task(task_id, {"type": "step_started", "data": step_data})
-
-        # 准备输入数据
-        input_data = task.description if i == 0 else session.get("last_output", "")
-
-        # 执行工具
-        result = tool_manager.execute_tool(step.tool, input_data)
-
-        # 更新状态
-        session["total_tokens"] += result.get("input_tokens", 0) + result.get(
-            "output_tokens", 0
-        )
-        session["total_cost"] += result.get("cost", 0)
-        session["last_output"] = str(result.get("data", ""))[:500]
-
-        # 发送步骤完成事件
-        completion_data = {
-            "step": i + 1,
-            "total_steps": len(task_plan),
-            "total_tokens": result.get("input_tokens", 0)
-            + result.get("output_tokens", 0),
-            "cost": result.get("cost", 0),
-            "result": str(result.get("data", ""))[:200],
-            "success": result["success"],
-        }
-
-        await broadcast_to_task(
-            task_id, {"type": "step_completed", "data": completion_data}
-        )
-
-        # 模拟延迟
-        await asyncio.sleep(1.5)
-
-    # 任务完成
-    session["status"] = "completed"
-    session["completed_at"] = datetime.now().isoformat()
-    await broadcast_to_task(task_id, {"type": "task_completed", "data": session})
 
 
 async def execute_agent_task_with_llm(task_id: str):
