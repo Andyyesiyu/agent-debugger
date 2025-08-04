@@ -1,13 +1,12 @@
 import threading
-import time
 from datetime import datetime
-from typing import Any, Dict, List, Optional
 
 from flask import Flask, jsonify, render_template, request
-from flask_socketio import SocketIO, emit, join_room
-from pydantic import BaseModel
+from flask_socketio import SocketIO, join_room
 
 from agent_engine.core import AgentDecisionEngine
+from agent_engine.executor import execute_agent_task
+from models.schemas import ApiResponse, TaskRequest
 from tools.manager import tool_manager
 
 app = Flask(__name__)
@@ -17,35 +16,6 @@ socketio = SocketIO(app, cors_allowed_origins="*")
 # 全局Agent引擎
 agent_engine = AgentDecisionEngine()
 sessions = {}
-
-
-# == Pydantic 数据模型 ==
-class TaskRequest(BaseModel):
-    description: str
-    strategy: str = "balanced"
-
-
-class TaskResponse(BaseModel):
-    id: str
-    description: str
-    strategy: str
-    status: str
-    steps: List[Dict[str, Any]]
-    total_tokens: int = 0
-    total_cost: float = 0.0
-    created_at: datetime
-
-
-class CostEstimate(BaseModel):
-    total_tokens: int
-    total_cost: float
-    steps: int
-
-
-class ApiResponse(BaseModel):
-    success: bool
-    message: str
-    data: Optional[Dict[str, Any]] = None
 
 
 # == API 路由 ==
@@ -126,7 +96,7 @@ def on_join(data):
     join_room(task_id)
 
     if task_id in sessions:
-        emit("task_status", sessions[task_id], to=task_id)
+        socketio.emit("task_status", sessions[task_id], to=task_id)
 
 
 @socketio.on("start_execution")
@@ -134,7 +104,7 @@ def start_execution(data):
     task_id = data["task_id"]
 
     if task_id not in sessions:
-        emit("error", {"message": "任务不存在"})
+        socketio.emit("error", {"message": "任务不存在"})
         return
 
     def execute_task():
@@ -142,63 +112,16 @@ def start_execution(data):
         session["status"] = "running"
         socketio.emit("task_started", session, to=task_id)
 
-        # 执行真实的Agent任务
-        execute_agent_task(task_id)
+        execute_agent_task(
+            agent_engine,
+            tool_manager,
+            task_id,
+            session,
+            lambda event, data: socketio.emit(event, data, to=task_id),
+        )
 
     thread = threading.Thread(target=execute_task)
     thread.start()
-
-
-def execute_agent_task(task_id):
-    """执行Agent任务"""
-    session = sessions[task_id]
-    task = agent_engine.get_task(task_id)
-
-    if not task:
-        socketio.emit("error", {"message": "任务不存在"}, to=task_id)
-        return
-
-    task_plan = task.steps
-
-    for i, step in enumerate(task_plan):
-        step_data = {
-            "step": i + 1,
-            "total_steps": len(task_plan),
-            "tool": step.tool,
-            "description": step.description,
-        }
-        socketio.emit("step_started", step_data, to=task_id)
-
-        # 准备输入数据
-        input_data = task.description if i == 0 else session.get("last_output", "")
-
-        # 执行工具
-        result = tool_manager.execute_tool(step.tool, input_data)
-
-        # 更新状态
-        session["total_tokens"] += result.get("input_tokens", 0) + result.get(
-            "output_tokens", 0
-        )
-        session["total_cost"] += result.get("cost", 0)
-        session["last_output"] = str(result.get("data", ""))[:500]
-
-        completion_data = {
-            "step": i + 1,
-            "total_steps": len(task_plan),
-            "total_tokens": result.get("input_tokens", 0)
-            + result.get("output_tokens", 0),
-            "cost": result.get("cost", 0),
-            "result": str(result.get("data", ""))[:200],
-            "success": result["success"],
-        }
-
-        socketio.emit("step_completed", completion_data, to=task_id)
-
-        time.sleep(1.5)
-
-    session["status"] = "completed"
-    session["completed_at"] = datetime.now()
-    socketio.emit("task_completed", session, to=task_id)
 
 
 if __name__ == "__main__":
