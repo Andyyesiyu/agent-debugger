@@ -1,14 +1,14 @@
 import threading
 import time
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from flask import Flask, jsonify, render_template, request
 from flask_socketio import SocketIO, emit, join_room
-from pydantic import BaseModel
 
 from agent_engine.core import AgentDecisionEngine
 from tools.manager import tool_manager
+from models.schemas import ApiResponse, TaskRequest, TaskResponse, TaskStep
 
 app = Flask(__name__)
 app.config["SECRET_KEY"] = "your-secret-key"
@@ -16,36 +16,7 @@ socketio = SocketIO(app, cors_allowed_origins="*")
 
 # 全局Agent引擎
 agent_engine = AgentDecisionEngine()
-sessions = {}
-
-
-# == Pydantic 数据模型 ==
-class TaskRequest(BaseModel):
-    description: str
-    strategy: str = "balanced"
-
-
-class TaskResponse(BaseModel):
-    id: str
-    description: str
-    strategy: str
-    status: str
-    steps: List[Dict[str, Any]]
-    total_tokens: int = 0
-    total_cost: float = 0.0
-    created_at: datetime
-
-
-class CostEstimate(BaseModel):
-    total_tokens: int
-    total_cost: float
-    steps: int
-
-
-class ApiResponse(BaseModel):
-    success: bool
-    message: str
-    data: Optional[Dict[str, Any]] = None
+sessions: Dict[str, Dict[str, Any]] = {}
 
 
 # == API 路由 ==
@@ -69,29 +40,23 @@ def create_task():
     plan = agent_engine.plan_execution(task_id)
     agent_engine.estimate_cost(task_id)
 
-    task_data = {
-        "id": task_id,
-        "description": task_req.description,
-        "strategy": task_req.strategy,
-        "status": "created",
-        "steps": [
-            {
-                "step_id": step.step_id,
-                "tool": step.tool,
-                "description": step.description,
-                "status": "pending",
-            }
-            for step in plan
-        ],
-        "total_tokens": 0,
-        "total_cost": 0.0,
-        "created_at": datetime.now(),
-    }
+    task_steps = [
+        TaskStep(step_id=step.step_id, tool=step.tool, description=step.description)
+        for step in plan
+    ]
+    task_response = TaskResponse(
+        id=task_id,
+        description=task_req.description,
+        strategy=task_req.strategy,
+        status="created",
+        steps=task_steps,
+        created_at=datetime.now(),
+    )
 
-    sessions[task_id] = task_data
+    sessions[task_id] = task_response.model_dump()
 
     response = ApiResponse(
-        success=True, message="任务创建成功", data=task_data
+        success=True, message="任务创建成功", data=task_response.model_dump()
     )
 
     return jsonify(response.model_dump()), 201

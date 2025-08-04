@@ -1,14 +1,21 @@
 import asyncio
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
-from pydantic import BaseModel
 
 from agent_engine.core import AgentDecisionEngine
 from tools.manager import tool_manager
+from models.schemas import (
+    ApiResponse,
+    CostEstimate,
+    ExecutionRequest,
+    TaskRequest,
+    TaskResponse,
+    TaskStep,
+)
 
 app = FastAPI(title="Agent Debugger API", version="1.0.0")
 
@@ -26,47 +33,6 @@ agent_engine = AgentDecisionEngine()
 agent_engine.set_tool_manager(tool_manager)  # 设置工具管理器
 sessions: Dict[str, Dict[str, Any]] = {}
 websocket_connections: Dict[str, List[WebSocket]] = {}
-
-
-# == Pydantic 数据模型 ==
-class TaskRequest(BaseModel):
-    description: str
-    strategy: str = "balanced"
-    execution_mode: str = "static"  # "static" or "llm_driven"
-
-
-class ExecutionRequest(BaseModel):
-    execution_mode: str = "static"  # "static" or "llm_driven"
-
-
-class TaskStep(BaseModel):
-    step_id: str
-    tool: str
-    description: str
-    status: str = "pending"
-
-
-class TaskResponse(BaseModel):
-    id: str
-    description: str
-    strategy: str
-    status: str
-    steps: List[TaskStep]
-    total_tokens: int = 0
-    total_cost: float = 0.0
-    created_at: datetime
-
-
-class CostEstimate(BaseModel):
-    total_tokens: int
-    total_cost: float
-    steps: int
-
-
-class ApiResponse(BaseModel):
-    success: bool
-    message: str
-    data: Optional[Dict[str, Any]] = None
 
 
 # == API 路由 ==
