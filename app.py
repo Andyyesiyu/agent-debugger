@@ -24,6 +24,12 @@ def index():
     return render_template("index.html")
 
 
+@app.route("/debug")
+def debug_page():
+    """Simple page for observing agent execution in real time."""
+    return render_template("debug.html")
+
+
 @app.route("/api/tasks", methods=["POST"])
 def create_task():
     try:

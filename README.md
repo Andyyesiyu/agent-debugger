@@ -7,6 +7,7 @@ Both Flask and FastAPI frontends are available and share a common execution engi
 - Task planning and cost estimation
 - Real-time WebSocket updates during execution
 - Pluggable tool architecture
+- Dedicated debug pages (`/debug`) to inspect reasoning steps and function calls
 
 ## Development
 ```bash
