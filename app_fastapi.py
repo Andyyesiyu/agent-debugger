@@ -42,6 +42,13 @@ async def index():
         return f.read()
 
 
+@app.get("/debug", response_class=HTMLResponse)
+async def debug_page():
+    """Serve the front-end debugger UI."""
+    with open("templates/debug_fastapi.html", "r", encoding="utf-8") as f:
+        return f.read()
+
+
 @app.post("/api/tasks", response_model=ApiResponse, status_code=201)
 async def create_task(task_req: TaskRequest) -> ApiResponse:
     # 使用Agent引擎创建任务
