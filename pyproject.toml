@@ -11,6 +11,7 @@ dependencies = [
     "flask-socketio>=5.5.1",
     "openai>=1.95.1",
     "pydantic>=2.11.7",
+    "python-dotenv>=1.1.1",
     "python-multipart>=0.0.20",
     "requests>=2.32.4",
     "rich>=14.0.0",

@@ -1,10 +1,15 @@
-import uuid
 import json
+import os
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Callable
+from typing import Any, Callable, Dict, List, Optional, cast
+
 import openai
-import os
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 @dataclass
@@ -88,9 +93,20 @@ class AgentDecisionEngine:
         },
     }
 
-    def __init__(self):
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        azure_endpoint: Optional[str] = None,
+        api_version: Optional[str] = None,
+        model_name: Optional[str] = None,
+    ):
         self.tasks = {}
-        self.llm_engine = LLMFunctionCallingEngine()
+        self.llm_engine = LLMFunctionCallingEngine(
+            api_key=api_key,
+            azure_endpoint=azure_endpoint,
+            api_version=api_version,
+            model_name=model_name,
+        )
         self.tool_manager = None  # 将在设置时初始化
 
     def set_tool_manager(self, tool_manager):
@@ -307,8 +323,38 @@ class LLMReasoningStep:
 class LLMFunctionCallingEngine:
     """LLM函数调用引擎 - 使用OpenAI的函数调用能力"""
 
-    def __init__(self, api_key: Optional[str] = None):
-        self.client = openai.AsyncOpenAI(api_key=api_key or os.getenv("OPENAI_API_KEY"))
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        azure_endpoint: Optional[str] = None,
+        api_version: Optional[str] = None,
+        model_name: Optional[str] = None,
+    ):
+        """
+        初始化LLM引擎
+
+        Args:
+            api_key: API密钥 (OpenAI或Azure)
+            azure_endpoint: Azure端点URL (仅Azure)
+            api_version: Azure API版本 (仅Azure)
+            model_name: 模型名称 (如 gcp-claude4-sonnet)
+        """
+        self.model_name = model_name or "gpt-3.5-turbo"
+        self.max_tokens = 1000  # range: [1, 4095]
+
+        if azure_endpoint:
+            # Azure OpenAI 配置
+            self.client = openai.AsyncAzureOpenAI(
+                azure_endpoint=azure_endpoint,
+                api_version=api_version or "2024-02-15-preview",
+                api_key=api_key or os.getenv("AZURE_OPENAI_API_KEY"),
+            )
+        else:
+            # 标准 OpenAI 配置
+            self.client = openai.AsyncOpenAI(
+                api_key=api_key or os.getenv("OPENAI_API_KEY")
+            )
+
         self.tool_manager = None  # 将在初始化时设置
         self.reasoning_steps: List[LLMReasoningStep] = []
 
@@ -375,13 +421,23 @@ class LLMFunctionCallingEngine:
         while iteration < max_iterations:
             try:
                 # 调用LLM进行推理
-                response = await self.client.chat.completions.create(
-                    model=self._get_model_for_strategy(strategy),
-                    messages=messages,  # type: ignore
-                    tools=self.get_available_functions(),  # type: ignore
-                    tool_choice="auto",
-                    temperature=0.1,
-                )
+                # 准备创建参数
+                create_params = {
+                    "model": self._get_model_for_strategy(strategy),
+                    "messages": messages,  # type: ignore
+                    "tools": self.get_available_functions(),  # type: ignore
+                    "tool_choice": "auto",
+                    "temperature": 0.1,
+                    "max_tokens": self.max_tokens,
+                }
+
+                # Azure特定配置
+                if hasattr(self.client, "_client_name") and "Azure" in str(
+                    type(self.client)
+                ):
+                    create_params["extra_headers"] = {"X-TT-LOGID": ""}
+
+                response = await self.client.chat.completions.create(**create_params)
 
                 message = response.choices[0].message
                 reasoning_step = LLMReasoningStep(
@@ -522,6 +578,11 @@ Always explain your reasoning before making tool calls."""
 
     def _get_model_for_strategy(self, strategy: str) -> str:
         """根据策略选择模型"""
+        # 如果配置了特定模型名称，直接使用
+        if self.model_name and self.model_name != "gpt-3.5-turbo":
+            return self.model_name
+
+        # 否则使用策略映射
         model_mapping = {
             "speed": "gpt-3.5-turbo",
             "cost": "gpt-3.5-turbo",
@@ -548,3 +609,42 @@ Always explain your reasoning before making tool calls."""
 
 GENERATION_INPUT_TOKENS = 1200
 GENERATION_OUTPUT_TOKENS = 1000
+
+
+# Singleton instance
+_agent_engine_instance: Optional[AgentDecisionEngine] = None
+
+
+def get_agent_engine(
+    api_key: Optional[str] = None,
+    azure_endpoint: Optional[str] = None,
+    api_version: Optional[str] = None,
+    model_name: Optional[str] = None,
+    force_new: bool = False,
+) -> AgentDecisionEngine:
+    """
+    Get or create the AgentDecisionEngine singleton instance.
+
+    Args:
+        api_key: API key override (defaults to env vars)
+        azure_endpoint: Azure endpoint override
+        api_version: Azure API version override
+        model_name: Model name override
+        force_new: Force creation of new instance
+
+    Returns:
+        AgentDecisionEngine instance
+    """
+    global _agent_engine_instance
+
+    if force_new or _agent_engine_instance is None:
+        _agent_engine_instance = AgentDecisionEngine(
+            api_key=api_key
+            or os.getenv("AZURE_OPENAI_API_KEY")
+            or os.getenv("OPENAI_API_KEY"),
+            azure_endpoint=azure_endpoint or os.getenv("AZURE_OPENAI_ENDPOINT"),
+            api_version=api_version or os.getenv("AZURE_OPENAI_API_VERSION"),
+            model_name=model_name or os.getenv("AZURE_OPENAI_MODEL_NAME"),
+        )
+
+    return cast(AgentDecisionEngine, _agent_engine_instance)

@@ -2,11 +2,12 @@ import asyncio
 from datetime import datetime
 from typing import Any, Dict, List
 
+from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 
-from agent_engine.core import AgentDecisionEngine
+from agent_engine.core import get_agent_engine
 from agent_engine.executor import execute_agent_task_async
 from models.schemas import (
     ApiResponse,
@@ -16,6 +17,9 @@ from models.schemas import (
     TaskStep,
 )
 from tools.manager import tool_manager
+
+# Load environment variables from .env file
+load_dotenv()
 
 app = FastAPI(title="Agent Debugger API", version="1.0.0")
 
@@ -28,8 +32,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 全局Agent引擎和工具管理器
-agent_engine = AgentDecisionEngine()
+# 全局Agent引擎和工具管理器 - 使用工厂函数
+agent_engine = get_agent_engine()
 agent_engine.set_tool_manager(tool_manager)  # 设置工具管理器
 sessions: Dict[str, Dict[str, Any]] = {}
 websocket_connections: Dict[str, List[WebSocket]] = {}
